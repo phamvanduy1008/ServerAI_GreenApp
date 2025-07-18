@@ -53,7 +53,7 @@ def predict():
         # Chuẩn hóa đường dẫn và gọi script
         normalized_image_path = image_path.replace('\\', '/')
         model_path = './AI/plant-disease-model-complete.pth'
-        command = f'python AI/predict.py "{normalized_image_path}"'
+        command = f'python3 AI/predict.py "{normalized_image_path}"'
         logger.info(f"Executing command: {command}")
 
         process = subprocess.run(
