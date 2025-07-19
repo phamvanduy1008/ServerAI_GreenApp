@@ -4,7 +4,7 @@ primary_region = "sfo"
   dockerfile = "Dockerfile"
 [env]
   MODEL_PATH = "/app/AI/plant-disease-model-complete.pth"
-  MODEL_URL = "YOUR_DEFAULT_MODEL_URL"  # Thay bằng URL thực tế của mô hình
+  MODEL_URL = "https://drive.google.com/uc?export=download&id=1sQHL2k0mx3VCntNGp5bHXvGPm5Lm4AUX"
 [[services]]
   internal_port = 8080
   protocol = "tcp"
