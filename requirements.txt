@@ -1,6 +1,8 @@
-flask
-torch
-torchvision
-Pillow
-numpy
-werkzeug
+flask==3.0.3
+torch==2.3.0+cpu
+torchvision==0.16.0+cpu
+Pillow==10.4.0
+numpy==1.26.4
+werkzeug==3.0.4
+gunicorn==23.0.0
+requests==2.32.3

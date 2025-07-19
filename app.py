@@ -2,28 +2,29 @@ from flask import Flask, request, jsonify
 import os
 import subprocess
 import json
+import requests
 from werkzeug.utils import secure_filename
 import logging
 
 app = Flask(__name__)
 
-# Cấu hình thư mục lưu ảnh
 UPLOAD_FOLDER = 'images/predict'
 ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png'}
 
-# Thiết lập logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Kiểm tra phần mở rộng file
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# Thiết lập thư mục lưu trữ ảnh
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({'message': '🚀 Server Flask đã deploy thành công!'})
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -43,17 +44,26 @@ def predict():
         logger.error("Invalid file format. Only JPEG, JPG, or PNG allowed")
         return jsonify({'error': 'Chỉ hỗ trợ file ảnh định dạng JPEG, JPG hoặc PNG!'}), 400
 
-    # Lưu ảnh
     filename = secure_filename(f"{os.urandom(24).hex()}{os.path.splitext(file.filename)[1]}")
     image_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(image_path)
     logger.info(f"Image uploaded to: {image_path}")
 
     try:
-        # Chuẩn hóa đường dẫn và gọi script
+        model_path = os.getenv("MODEL_PATH", "/app/AI/plant-disease-model-complete.pth")
+        if not os.path.exists(model_path):
+            model_url = os.getenv("MODEL_URL", "YOUR_DEFAULT_MODEL_URL")
+            logger.info(f"Downloading model from {model_url}")
+            os.makedirs('/app/AI', exist_ok=True)
+            with requests.get(model_url, stream=True) as r:
+                r.raise_for_status()
+                with open(model_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            logger.info("Model downloaded successfully")
+
         normalized_image_path = image_path.replace('\\', '/')
-        model_path = './AI/plant-disease-model-complete.pth'
-        command = f'python3 AI/predict.py "{normalized_image_path}"'
+        command = f'python3 AI/predict.py "{normalized_image_path}"'  # Quay lại python3 cho Fly.io
         logger.info(f"Executing command: {command}")
 
         process = subprocess.run(
@@ -61,7 +71,7 @@ def predict():
             shell=True,
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=60
         )
 
         if process.returncode != 0:
@@ -87,7 +97,6 @@ def predict():
         logger.error(f"Unexpected error: {str(e)}")
         return jsonify({'error': 'Unexpected error', 'details': str(e)}), 500
     finally:
-        # Luôn xóa ảnh sau khi xử lý
         try:
             if os.path.exists(image_path):
                 os.unlink(image_path)
@@ -98,7 +107,4 @@ def predict():
             logger.error(f"Error deleting image {image_path}: {str(unlink_err)}")
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
-    logger.info("Received predict request")
-    
-   
+    app.run(debug=False, host='0.0.0.0', port=8080)  # Sử dụng port 8080 cho Fly.io
