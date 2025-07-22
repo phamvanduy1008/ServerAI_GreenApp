@@ -2,16 +2,21 @@ from flask import Flask, request, jsonify
 import os
 import subprocess
 import uuid
-import json
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+
+# Giới hạn kích thước file tải lên (1MB)
+app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024
 
 # Cấu hình thư mục upload
 UPLOAD_FOLDER = 'images/predict'
 ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png'}
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# Tạo thư mục upload nếu chưa tồn tại
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 def allowed_file(filename):
@@ -23,50 +28,89 @@ def index():
 
 @app.route('/predict', methods=['POST'])
 def predict():
+    print('Nhận yêu cầu dự đoán')
+    
+    # Kiểm tra xem có file được tải lên không
     if 'image' not in request.files:
-        return jsonify({'error': 'No image uploaded'}), 400
-
+        print('Không có ảnh được tải lên')
+        return jsonify({'error': 'Không có ảnh được tải lên'}), 400
+    
     file = request.files['image']
-
+    
+    # Kiểm tra file hợp lệ
     if file.filename == '':
-        return jsonify({'error': 'No image selected'}), 400
-
+        print('Không chọn ảnh')
+        return jsonify({'error': 'Không chọn ảnh'}), 400
+    
     if not allowed_file(file.filename):
-        return jsonify({'error': 'Only JPEG, JPG, or PNG files are supported'}), 400
+        print('Định dạng file không hợp lệ')
+        return jsonify({'error': 'Chỉ hỗ trợ file JPEG, JPG hoặc PNG'}), 400
 
-    # Lưu ảnh
-    filename = f"{uuid.uuid4().hex}{os.path.splitext(secure_filename(file.filename))[1]}"
-    image_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    # Lưu file với tên duy nhất
+    unique_filename = f"{uuid.uuid4().hex}{os.path.splitext(secure_filename(file.filename))[1]}"
+    image_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
     file.save(image_path)
+    print(f'Ảnh được tải lên: {image_path}')
 
-    # Đường dẫn chuẩn hóa cho lệnh shell
-    normalized_path = image_path.replace('\\', '/')
-    command = ['python3', 'AI/predict.py', normalized_path]
+    # Chuẩn hóa đường dẫn
+    normalized_image_path = image_path.replace('\\', '/')
+    command = f'python AI/predict.py "{normalized_image_path}"'
+    print(f'Thực thi lệnh: {command}')
 
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        # Chạy script dự đoán với timeout 10 giây
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
 
-        os.remove(image_path)  # Xóa ảnh sau khi xử lý
-
-        if result.returncode != 0:
-            return jsonify({'error': 'Prediction failed', 'details': result.stderr.strip()}), 500
-
-        # Chuyển kết quả stdout (dạng JSON) thành dict
+        # Xóa ảnh sau khi xử lý
         try:
-            prediction_result = json.loads(result.stdout.strip())
+            os.unlink(image_path)
+            print(f'Đã xóa ảnh: {image_path}')
+        except Exception as unlink_err:
+            print(f'Lỗi xóa ảnh: {image_path}, {unlink_err}')
+
+        # Kiểm tra lỗi từ script
+        if result.returncode != 0:
+            print('Lỗi script Python:', result.stderr)
+            return jsonify({'error': 'Dự đoán thất bại', 'details': result.stderr}), 500
+
+        print('Kết quả stdout:', result.stdout)
+        print('Kết quả stderr:', result.stderr)
+
+        if not result.stdout:
+            print('Không có đầu ra từ script Python')
+            return jsonify({'error': 'Không có kết quả dự đoán từ script'}), 500
+
+        # Phân tích kết quả
+        try:
+            prediction_result = eval(result.stdout.strip())  # Giả sử predict.py trả về dict
+            print('Kết quả dự đoán:', prediction_result)
             return jsonify(prediction_result)
-        except json.JSONDecodeError as e:
-            return jsonify({'error': 'Failed to parse prediction result', 'details': str(e)}), 500
+        except Exception as parse_err:
+            print('Lỗi phân tích đầu ra Python:', parse_err)
+            return jsonify({'error': 'Kết quả dự đoán không hợp lệ', 'details': str(parse_err)}), 500
 
-    except subprocess.TimeoutExpired:
-        if os.path.exists(image_path):
-            os.remove(image_path)
-        return jsonify({'error': 'Prediction script timed out'}), 500
-
-    except Exception as e:
-        if os.path.exists(image_path):
-            os.remove(image_path)
-        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
+    except subprocess.TimeoutExpired as timeout_err:
+        print('Hết thời gian chạy script:', timeout_err)
+        try:
+            os.unlink(image_path)
+            print(f'Đã xóa ảnh: {image_path}')
+        except Exception as unlink_err:
+            print(f'Lỗi xóa ảnh: {image_path}, {unlink_err}')
+        return jsonify({'error': 'Hết thời gian dự đoán', 'details': str(timeout_err)}), 500
+    except Exception as err:
+        print('Lỗi không xác định:', err)
+        try:
+            os.unlink(image_path)
+            print(f'Đã xóa ảnh: {image_path}')
+        except Exception as unlink_err:
+            print(f'Lỗi xóa ảnh: {image_path}, {unlink_err}')
+        return jsonify({'error': 'Dự đoán thất bại', 'details': str(err)}), 500
 
 if __name__ == '__main__':
-    app.run()
+    app.run(debug=False) 
